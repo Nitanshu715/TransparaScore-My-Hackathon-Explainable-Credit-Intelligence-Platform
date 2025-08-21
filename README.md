@@ -1,6 +1,6 @@
 # 🏦 TransparaScore-My-Hackathon-Explainable-Credit-Intelligence-Platform
 
-CredLytix is a real-time explainable credit intelligence platform built for the **CredTech Hackathon**.  
+TransparaScore is a real-time explainable credit intelligence platform built for the **CredTech Hackathon**.  
 It combines **financial data, macroeconomic indicators, and news events** to generate transparent creditworthiness scores for major companies.
 
 ---
@@ -24,8 +24,8 @@ It combines **financial data, macroeconomic indicators, and news events** to gen
 ## ▶️ Run Locally
 1. Clone this repo:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/CredLytix.git
-   cd CredLytix
+   git clone https://github.com/YOUR_USERNAME/TransparaScore.git
+   cd TransparaScore
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
