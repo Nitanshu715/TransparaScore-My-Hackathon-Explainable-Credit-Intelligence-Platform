@@ -2,4 +2,8 @@ streamlit
 yfinance
 transformers
 torch
-
+streamlit
+pandas
+numpy
+requests
+feedparser
