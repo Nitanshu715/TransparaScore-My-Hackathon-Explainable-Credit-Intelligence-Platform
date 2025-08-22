@@ -8,5 +8,5 @@ numpy
 requests
 feedparser
 scikit-learn
-shap
 joblib
+
