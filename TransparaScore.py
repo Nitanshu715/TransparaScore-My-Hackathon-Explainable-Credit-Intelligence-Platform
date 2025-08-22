@@ -4,7 +4,6 @@ import base64
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Optional
-import shap
 import joblib
 import requests
 import pandas as pd
@@ -13,14 +12,34 @@ import streamlit as st
 import feedparser
 from sklearn.ensemble import RandomForestRegressor
 
+# ======== SHAP REPLACEMENT ========
+# SHAP is used for feature attribution/explanation. If unavailable, we use model.feature_importances_
+# and a simple difference to base prediction for local attribution.
+
+def get_feature_importance(model, X: pd.DataFrame) -> pd.DataFrame:
+    """Return a DataFrame with feature importances for the trained model and a local explanation."""
+    # Model global importances:
+    importances = getattr(model, "feature_importances_", np.ones(X.shape[1]))
+    base_pred = np.mean(model.predict(X))  # Not true SHAP base value, but a neutral reference
+    pred = model.predict(X)[0]
+    contribs = (X.iloc[0] - X.mean()).values * importances
+    # Normalize local contributions such that sum matches pred - base_pred (not exact SHAP, but interpretable)
+    if np.sum(np.abs(contribs)) > 0:
+        contribs = contribs * ((pred - base_pred) / np.sum(contribs) if np.sum(contribs) != 0 else 0)
+    else:
+        contribs = np.zeros_like(contribs)
+    df = pd.DataFrame({
+        "Feature": X.columns,
+        "Importance": importances,
+        "Local Contrib": contribs
+    }).sort_values("Importance", ascending=False)
+    return df
 
 @st.cache_resource
 def load_model():
     try:
-        # Try to load saved model
         return joblib.load("credit_model.pkl")
     except FileNotFoundError:
-        # If not found, train a quick dummy model
         X_train = pd.DataFrame({
             "return_pct": np.random.randn(100),
             "vol_pct": np.random.rand(100)*10,
@@ -36,21 +55,10 @@ def load_model():
         y_train = np.random.rand(100)*100
         model = RandomForestRegressor()
         model.fit(X_train, y_train)
-        joblib.dump(model, "credit_model.pkl")  # Save for next run
+        joblib.dump(model, "credit_model.pkl")
         return model
 
-
 ml_model = load_model()
-explainer = shap.TreeExplainer(ml_model)
-
-@st.cache_resource
-def load_model():
-    return joblib.load("credit_model.pkl")
-
-ml_model = load_model()
-explainer = shap.TreeExplainer(ml_model)
-
-
 
 # =======================
 # ---- API KEYS & CONFIG ----
@@ -62,7 +70,7 @@ GDELT_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 RSS_FEED_URL = "https://feeds.reuters.com/reuters/businessNews"
 
 DEFAULT_COMPANIES = {
-    "CREDTECH": "CREDTECH.NS",   # Example symbol
+    "CREDTECH": "CREDTECH.NS",
     "RELIANCE": "RELIANCE.NS",
     "TCS": "TCS.NS",
     "INFOSYS": "INFY.NS",
@@ -107,17 +115,15 @@ def set_bg(image_file: str):
             color: #222 !important;
         }}
 
-        /* --- Main content universal glass block --- */
         .glass-block {{
-    background: rgba(255,255,255,0.87) !important;
-    border-radius: 22px;
-    padding: 2.3rem 2.7rem 2.3rem 2.7rem;
-    box-shadow: 0 4px 24px 0 rgba(90,90,90,0.09);
-    margin-bottom: 2.5rem;
-    margin-top: 2.0rem;
-    border: 1.7px solid rgba(220,220,220,0.28);
-    font-size: 1.19rem; /* Increased font size */
-            /* wavy look */
+            background: rgba(255,255,255,0.87) !important;
+            border-radius: 22px;
+            padding: 2.3rem 2.7rem 2.3rem 2.7rem;
+            box-shadow: 0 4px 24px 0 rgba(90,90,90,0.09);
+            margin-bottom: 2.5rem;
+            margin-top: 2.0rem;
+            border: 1.7px solid rgba(220,220,220,0.28);
+            font-size: 1.19rem;
         }}
         .block-container {{
             padding-top: 1.5rem !important;
@@ -171,7 +177,7 @@ with st.sidebar:
 
 col1, col2 = st.columns([10, 13])
 with col2:
-    st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)  # adds 2px space
+    st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     refresh_btn = st.button("🔄 Refresh Data Now")
 
 # =======================
@@ -327,7 +333,6 @@ def event_signals_for_symbol(symbol: str) -> Tuple[float, List[Dict]]:
     scored = []
     total = 0.0
 
-    # Simple keyword rules for negative/positive event detection
     NEG_RULES = [
         ("bankrupt", 15), ("default", 15), ("restructur", 12), ("downgrade", 10),
         ("lawsuit", 8), ("probe", 6), ("fraud", 12), ("layoff", 8), ("data breach", 8),
@@ -401,9 +406,7 @@ if refresh_btn:
     gdelt_headlines.clear()
     rss_latest.clear()
 
-# ---- Main Content Block Start ----
 with st.container():
-    st.markdown('<div class="glass-block">', unsafe_allow_html=True)
 
     st.header("📊 Company Credit Overview")
 
@@ -418,7 +421,6 @@ with st.container():
     weights = [0.55, 0.25, 0.20]
     final_score = weights[0]*fin_score + weights[1]*mac_score + weights[2]*ev_score
 
-    # Overview Table
     overview_data = {
         "Company": [company],
         "Credit Score": [round(final_score, 2)],
@@ -429,7 +431,6 @@ with st.container():
     ov_df = pd.DataFrame(overview_data)
     st.dataframe(ov_df, use_container_width=True)
 
-    # Detailed Explanation
     st.markdown("""
     ### How to Interpret the Scorecard
 
@@ -443,7 +444,6 @@ with st.container():
     - **All scores and features are computed using simple, transparent rules.**
     """)
 
-    # ---- Factor Contribution ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Factor Contribution Breakdown")
 
@@ -462,7 +462,6 @@ with st.container():
     st.write("**Event signal (0-100):**")
     st.dataframe(pd.DataFrame.from_dict(ev_sub, orient="index", columns=["Score"]))
 
-    # ---- Stock Price Trend ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Stock Price Trend")
     if df is not None and not df.empty:
@@ -470,7 +469,6 @@ with st.container():
     else:
         st.info("No price history available for chart.")
 
-    # ---- Score Trend ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Score Trend (Simulated)")
     if df is not None and not df.empty:
@@ -485,7 +483,6 @@ with st.container():
             hdf = pd.DataFrame(hist_scores, columns=["Date", "Score"]).set_index("Date")
             st.line_chart(hdf)
 
-    # ---- Macro Data ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Recent Macro Indicators")
     st.write(f"- **Inflation (CPI YoY):** {macro.get('cpi_yoy_pct',0):.2f}%")
@@ -494,7 +491,6 @@ with st.container():
     st.write(f"- **10Y Treasury Rate:** {macro.get('rate10y_pct',0):.2f}%")
     st.write(f"- **Unemployment Rate:** {macro.get('unemp_pct',0):.2f}%")
 
-    # ---- Recent Events & News ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Recent Events & News")
     events_df = pd.DataFrame(ev_list) if ev_list else pd.DataFrame(columns=["title","label","score","link"])
@@ -508,7 +504,6 @@ with st.container():
         - Neutral/no news typically means "no news is good news".
         """)
     else:
-        # Show top 3 live news if no events detected
         st.markdown("**No recent scored events, but here are the latest news headlines for this company:**")
         top_news = gdelt_headlines(symbol, max_rows=3)
         if not top_news:
@@ -522,7 +517,6 @@ with st.container():
         else:
             st.write("No live news headlines available at this moment.")
 
-    # ---- Understanding This Platform ----
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Understanding This Platform")
     st.markdown(f"""
@@ -559,40 +553,31 @@ with st.container():
     }
     X = pd.DataFrame([features])
     pred_score = ml_model.predict(X)[0]
-    shap_values = explainer.shap_values(X)
+    feat_imp_df = get_feature_importance(ml_model, X)
 
-    # ---- Download/export ----
     st.subheader("⬇️ Export Data")
     csv = ov_df.to_csv(index=False).encode()
     st.download_button("Download Company Overview CSV", data=csv, file_name=f"{company}_overview.csv", mime="text/csv")
     st.caption(f"Last refreshed (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
 
-    st.subheader("🤖 ML Model Prediction & Explanation")
+    st.subheader("🤖 ML Model Prediction & Feature Explanation")
     st.write(f"Predicted Credit Score (ML Model): {pred_score:.2f}")
 
-    # Feature importance
-    shap_df = pd.DataFrame({
-        "Feature": X.columns,
-        "SHAP Value": shap_values[0]
-    }).sort_values("SHAP Value", key=abs, ascending=False)
+    st.dataframe(feat_imp_df[["Feature", "Importance", "Local Contrib"]])
 
-    st.dataframe(shap_df)
-
-    # Simple natural language summary
-    top_feature = shap_df.iloc[0]
-    if top_feature["SHAP Value"] > 0:
+    top_feature = feat_imp_df.iloc[0]
+    if top_feature["Local Contrib"] > 0:
         impact = "positively"
     else:
         impact = "negatively"
     st.markdown(f"""
     **Explanation in plain words:**  
     The model predicts this score mainly because **{top_feature['Feature']}** {impact} influenced the rating.  
-    Other important drivers include {', '.join(shap_df['Feature'].iloc[1:3].tolist())}.
+    Other important drivers include {', '.join(feat_imp_df['Feature'].iloc[1:3].tolist())}.
     """)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ========== FOOTER ==========
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     """
@@ -603,5 +588,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
 
