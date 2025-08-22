@@ -5,7 +5,8 @@ It combines **financial data, macroeconomic indicators, and news events** to gen
 
 ---
 
-## 🔗 Link to the Live App: https://nitanshu-tak-transpara-score.streamlit.app/
+## 🔗 [Live App](https://nitanshu-tak-transpara-score.streamlit.app/)
+
 
 ---
 
