@@ -5,6 +5,8 @@ It combines **financial data, macroeconomic indicators, and news events** to gen
 
 ---
 
+## 🔗 Link to the Live App: https://nitanshu-tak-transpara-score.streamlit.app/
+
 ## 🚀 Features
 - Live data from Yahoo Finance, FRED, World Bank, Reuters, and GDELT  
 - Transparent scoring based on financial performance, macro conditions, and event sentiment  
