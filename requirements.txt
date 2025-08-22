@@ -10,12 +10,3 @@ feedparser
 scikit-learn
 shap
 joblib
-streamlit
-pandas
-numpy
-requests
-joblib
-scikit-learn
-feedparser
-shap
-
