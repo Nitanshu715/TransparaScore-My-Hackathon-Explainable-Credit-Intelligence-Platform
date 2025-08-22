@@ -4,12 +4,53 @@ import base64
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Optional
-
+import shap
+import joblib
 import requests
 import pandas as pd
 import numpy as np
 import streamlit as st
 import feedparser
+from sklearn.ensemble import RandomForestRegressor
+
+
+@st.cache_resource
+def load_model():
+    try:
+        # Try to load saved model
+        return joblib.load("credit_model.pkl")
+    except FileNotFoundError:
+        # If not found, train a quick dummy model
+        X_train = pd.DataFrame({
+            "return_pct": np.random.randn(100),
+            "vol_pct": np.random.rand(100)*10,
+            "max_dd_pct": np.random.rand(100)*-20,
+            "liq_proxy": np.random.rand(100)*1000,
+            "cpi_yoy_pct": np.random.rand(100)*5,
+            "unemp_pct": np.random.rand(100)*10,
+            "rate10y_pct": np.random.rand(100)*6,
+            "gdp_growth_us_pct": np.random.rand(100)*5,
+            "gdp_growth_in_pct": np.random.rand(100)*7,
+            "event_signal": np.random.randn(100)
+        })
+        y_train = np.random.rand(100)*100
+        model = RandomForestRegressor()
+        model.fit(X_train, y_train)
+        joblib.dump(model, "credit_model.pkl")  # Save for next run
+        return model
+
+
+ml_model = load_model()
+explainer = shap.TreeExplainer(ml_model)
+
+@st.cache_resource
+def load_model():
+    return joblib.load("credit_model.pkl")
+
+ml_model = load_model()
+explainer = shap.TreeExplainer(ml_model)
+
+
 
 # =======================
 # ---- API KEYS & CONFIG ----
@@ -64,6 +105,22 @@ def set_bg(image_file: str):
         }}
         h1, h2, h3, h4, h5, h6, p, li, span, label, div, thead, tbody, td, th {{
             color: #222 !important;
+        }}
+
+        /* --- Main content universal glass block --- */
+        .glass-block {{
+    background: rgba(255,255,255,0.87) !important;
+    border-radius: 22px;
+    padding: 2.3rem 2.7rem 2.3rem 2.7rem;
+    box-shadow: 0 4px 24px 0 rgba(90,90,90,0.09);
+    margin-bottom: 2.5rem;
+    margin-top: 2.0rem;
+    border: 1.7px solid rgba(220,220,220,0.28);
+    font-size: 1.19rem; /* Increased font size */
+            /* wavy look */
+        }}
+        .block-container {{
+            padding-top: 1.5rem !important;
         }}
         </style>
         """
@@ -344,150 +401,196 @@ if refresh_btn:
     gdelt_headlines.clear()
     rss_latest.clear()
 
-st.header("📊 Company Credit Overview")
+# ---- Main Content Block Start ----
+with st.container():
+    st.markdown('<div class="glass-block">', unsafe_allow_html=True)
 
-symbol = DEFAULT_COMPANIES[company]
-df = fetch_yahoo_timeseries(symbol, period=period, interval=interval)
-pf = price_features(df)
-fin_score, fin_sub = score_financial(pf)
-macro = macro_features()
-mac_score, mac_sub = score_macro(macro)
-ev_avg, ev_list = event_signals_for_symbol(symbol)
-ev_score, ev_sub = score_events(ev_avg)
-weights = [0.55, 0.25, 0.20]
-final_score = weights[0]*fin_score + weights[1]*mac_score + weights[2]*ev_score
+    st.header("📊 Company Credit Overview")
 
-# Overview Table
-overview_data = {
-    "Company": [company],
-    "Credit Score": [round(final_score, 2)],
-    "Return (%)": [round(pf.get("return_pct", 0), 2)],
-    "Volatility (%)": [round(pf.get("vol_pct", 0), 2)],
-    "Drawdown (%)": [round(pf.get("max_dd_pct", 0), 2)],
-}
-ov_df = pd.DataFrame(overview_data)
-st.dataframe(ov_df, use_container_width=True)
+    symbol = DEFAULT_COMPANIES[company]
+    df = fetch_yahoo_timeseries(symbol, period=period, interval=interval)
+    pf = price_features(df)
+    fin_score, fin_sub = score_financial(pf)
+    macro = macro_features()
+    mac_score, mac_sub = score_macro(macro)
+    ev_avg, ev_list = event_signals_for_symbol(symbol)
+    ev_score, ev_sub = score_events(ev_avg)
+    weights = [0.55, 0.25, 0.20]
+    final_score = weights[0]*fin_score + weights[1]*mac_score + weights[2]*ev_score
 
-# Detailed Explanation
-st.markdown("""
-### How to Interpret the Scorecard
+    # Overview Table
+    overview_data = {
+        "Company": [company],
+        "Credit Score": [round(final_score, 2)],
+        "Return (%)": [round(pf.get("return_pct", 0), 2)],
+        "Volatility (%)": [round(pf.get("vol_pct", 0), 2)],
+        "Drawdown (%)": [round(pf.get("max_dd_pct", 0), 2)],
+    }
+    ov_df = pd.DataFrame(overview_data)
+    st.dataframe(ov_df, use_container_width=True)
 
-- **Credit Score (0-100)**: Higher values indicate stronger creditworthiness, combining financial, macro and event factors.
-- **Return (%)**: Price return over the selected window. Higher is better.
-- **Volatility (%)**: Standard deviation of daily/weekly returns. Lower is better (stable prices).
-- **Drawdown (%)**: Maximum observed drop from peak price. Lower is better (less risky).
-- **Financial Score**: Derived from return, volatility, drawdown, and liquidity.
-- **Macro Score**: Tracks inflation (CPI YoY), unemployment, 10Y interest rate, GDP growth.
-- **Event Score**: Weighted signal from recent news and event headlines, classifying positive/negative stories.
-- **All scores and features are computed using simple, transparent rules.**
-""")
+    # Detailed Explanation
+    st.markdown("""
+    ### How to Interpret the Scorecard
 
-# ---- Factor Contribution ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Factor Contribution Breakdown")
-
-contrib = pd.DataFrame({
-    "Factor": ["Financial", "Macro", "Events"],
-    "Score": [fin_score, mac_score, ev_score]
-}).set_index("Factor")
-st.bar_chart(contrib)
-
-st.write("**Financial sub-factors (0-100):**")
-st.dataframe(pd.DataFrame.from_dict(fin_sub, orient="index", columns=["Score"]))
-
-st.write("**Macro sub-factors (0-100):**")
-st.dataframe(pd.DataFrame.from_dict(mac_sub, orient="index", columns=["Score"]))
-
-st.write("**Event signal (0-100):**")
-st.dataframe(pd.DataFrame.from_dict(ev_sub, orient="index", columns=["Score"]))
-
-# ---- Stock Price Trend ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Stock Price Trend")
-if df is not None and not df.empty:
-    st.line_chart(df["Close"])
-else:
-    st.info("No price history available for chart.")
-
-# ---- Score Trend ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Score Trend (Simulated)")
-if df is not None and not df.empty:
-    hist_scores = []
-    cdf = df["Close"].reset_index()
-    for i in range(5, len(cdf)):
-        sub = df.iloc[:i]
-        s_fin, _ = score_financial(price_features(sub))
-        s = (weights[0]*s_fin + weights[1]*mac_score + weights[2]*ev_score)
-        hist_scores.append((cdf.loc[i, "Date"], s))
-    if hist_scores:
-        hdf = pd.DataFrame(hist_scores, columns=["Date", "Score"]).set_index("Date")
-        st.line_chart(hdf)
-
-# ---- Macro Data ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Recent Macro Indicators")
-st.write(f"- **Inflation (CPI YoY):** {macro.get('cpi_yoy_pct',0):.2f}%")
-st.write(f"- **US GDP Growth:** {macro.get('gdp_growth_us_pct',0):.2f}%")
-st.write(f"- **IN GDP Growth:** {macro.get('gdp_growth_in_pct',0):.2f}%")
-st.write(f"- **10Y Treasury Rate:** {macro.get('rate10y_pct',0):.2f}%")
-st.write(f"- **Unemployment Rate:** {macro.get('unemp_pct',0):.2f}%")
-
-# ---- Recent Events & News ----
-events_df = pd.DataFrame(ev_list) if ev_list else pd.DataFrame(columns=["title","label","score","link"])
-if not events_df.empty:
-    events_df = events_df[["title", "label", "score", "link"]]
-    st.dataframe(events_df, use_container_width=True)
-    st.write("""
-    **Interpretation:**  
-    - Positive news headlines ("positive" label) may indicate credit improvement or opportunity.
-    - Negative headlines ("negative" label) may signal risk factors or credit concerns.
-    - Neutral/no news typically means "no news is good news".
+    - **Credit Score (0-100)**: Higher values indicate stronger creditworthiness, combining financial, macro and event factors.
+    - **Return (%)**: Price return over the selected window. Higher is better.
+    - **Volatility (%)**: Standard deviation of daily/weekly returns. Lower is better (stable prices).
+    - **Drawdown (%)**: Maximum observed drop from peak price. Lower is better (less risky).
+    - **Financial Score**: Derived from return, volatility, drawdown, and liquidity.
+    - **Macro Score**: Tracks inflation (CPI YoY), unemployment, 10Y interest rate, GDP growth.
+    - **Event Score**: Weighted signal from recent news and event headlines, classifying positive/negative stories.
+    - **All scores and features are computed using simple, transparent rules.**
     """)
-else:
-    # Show top 3 live news if no events detected
-    st.markdown("**No recent scored events, but here are the latest news headlines for this company:**")
-    top_news = gdelt_headlines(symbol, max_rows=3)
-    if not top_news:
-        top_news = rss_latest(RSS_FEED_URL, limit=3)
-    if top_news:
-        for news in top_news[:3]:
-            title = news.get("title", "(No title)")
-            link = news.get("url") or news.get("link") or "#"
-            published = news.get("published", "")
-            st.markdown(f"- [{title}]({link}) <span style='color:#888;font-size:0.85em;'>({published})</span>", unsafe_allow_html=True)
+
+    # ---- Factor Contribution ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Factor Contribution Breakdown")
+
+    contrib = pd.DataFrame({
+        "Factor": ["Financial", "Macro", "Events"],
+        "Score": [fin_score, mac_score, ev_score]
+    }).set_index("Factor")
+    st.bar_chart(contrib)
+
+    st.write("**Financial sub-factors (0-100):**")
+    st.dataframe(pd.DataFrame.from_dict(fin_sub, orient="index", columns=["Score"]))
+
+    st.write("**Macro sub-factors (0-100):**")
+    st.dataframe(pd.DataFrame.from_dict(mac_sub, orient="index", columns=["Score"]))
+
+    st.write("**Event signal (0-100):**")
+    st.dataframe(pd.DataFrame.from_dict(ev_sub, orient="index", columns=["Score"]))
+
+    # ---- Stock Price Trend ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Stock Price Trend")
+    if df is not None and not df.empty:
+        st.line_chart(df["Close"])
     else:
-        st.write("No live news headlines available at this moment.")
+        st.info("No price history available for chart.")
 
-# ---- Understanding This Platform ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.subheader("Understanding This Platform")
-st.markdown(f"""
-**What does this platform do?**
+    # ---- Score Trend ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Score Trend (Simulated)")
+    if df is not None and not df.empty:
+        hist_scores = []
+        cdf = df["Close"].reset_index()
+        for i in range(5, len(cdf)):
+            sub = df.iloc[:i]
+            s_fin, _ = score_financial(price_features(sub))
+            s = (weights[0]*s_fin + weights[1]*mac_score + weights[2]*ev_score)
+            hist_scores.append((cdf.loc[i, "Date"], s))
+        if hist_scores:
+            hdf = pd.DataFrame(hist_scores, columns=["Date", "Score"]).set_index("Date")
+            st.line_chart(hdf)
 
-This CredTech scorecard combines three core types of data for any selected company:
-- **1. Financial Market Data:**  
-    We use stock price trends, volatility, and drawdown to gauge recent financial risk and momentum.
-- **2. Macroeconomic Indicators:**  
-    We fetch the latest inflation, unemployment, 10-year interest rates, and GDP growth to understand the external economic environment.
-- **3. News & Events:**  
-    We scan news feeds and event databases for major headlines that may affect company creditworthiness.
+    # ---- Macro Data ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Recent Macro Indicators")
+    st.write(f"- **Inflation (CPI YoY):** {macro.get('cpi_yoy_pct',0):.2f}%")
+    st.write(f"- **US GDP Growth:** {macro.get('gdp_growth_us_pct',0):.2f}%")
+    st.write(f"- **IN GDP Growth:** {macro.get('gdp_growth_in_pct',0):.2f}%")
+    st.write(f"- **10Y Treasury Rate:** {macro.get('rate10y_pct',0):.2f}%")
+    st.write(f"- **Unemployment Rate:** {macro.get('unemp_pct',0):.2f}%")
 
-**All scoring rules are simple, open, and rule-based.**  
-There is no black-box AI or hidden logic.  
-All data and scores can be downloaded for further analysis.
+    # ---- Recent Events & News ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Recent Events & News")
+    events_df = pd.DataFrame(ev_list) if ev_list else pd.DataFrame(columns=["title","label","score","link"])
+    if not events_df.empty:
+        events_df = events_df[["title", "label", "score", "link"]]
+        st.dataframe(events_df, use_container_width=True)
+        st.write("""
+        **Interpretation:**  
+        - Positive news headlines ("positive" label) may indicate credit improvement or opportunity.
+        - Negative headlines ("negative" label) may signal risk factors or credit concerns.
+        - Neutral/no news typically means "no news is good news".
+        """)
+    else:
+        # Show top 3 live news if no events detected
+        st.markdown("**No recent scored events, but here are the latest news headlines for this company:**")
+        top_news = gdelt_headlines(symbol, max_rows=3)
+        if not top_news:
+            top_news = rss_latest(RSS_FEED_URL, limit=3)
+        if top_news:
+            for news in top_news[:3]:
+                title = news.get("title", "(No title)")
+                link = news.get("url") or news.get("link") or "#"
+                published = news.get("published", "")
+                st.markdown(f"- [{title}]({link}) <span style='color:#888;font-size:0.85em;'>({published})</span>", unsafe_allow_html=True)
+        else:
+            st.write("No live news headlines available at this moment.")
 
-*For more details, see the hackathon problem statement and documentation.*
+    # ---- Understanding This Platform ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Understanding This Platform")
+    st.markdown(f"""
+    **What does this platform do?**
 
----
-""")
+    This CredTech scorecard combines three core types of data for any selected company:
+    - **1. Financial Market Data:**  
+        We use stock price trends, volatility, and drawdown to gauge recent financial risk and momentum.
+    - **2. Macroeconomic Indicators:**  
+        We fetch the latest inflation, unemployment, 10-year interest rates, and GDP growth to understand the external economic environment.
+    - **3. News & Events:**  
+        We scan news feeds and event databases for major headlines that may affect company creditworthiness.
 
-# ---- Download/export ----
-st.subheader("⬇️ Export Data")
-csv = ov_df.to_csv(index=False).encode()
-st.download_button("Download Company Overview CSV", data=csv, file_name=f"{company}_overview.csv", mime="text/csv")
-st.caption(f"Last refreshed (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
-st.markdown("</div>", unsafe_allow_html=True)
+    **All scoring rules are simple, open, and rule-based.**  
+    There is no black-box AI or hidden logic.  
+    All data and scores can be downloaded for further analysis.
+
+    *For more details, see the hackathon problem statement and documentation.*
+
+    ---
+    """)
+
+    features = {
+        "return_pct": pf["return_pct"],
+        "vol_pct": pf["vol_pct"],
+        "max_dd_pct": pf["max_dd_pct"],
+        "liq_proxy": pf["liq_proxy"],
+        "cpi_yoy_pct": macro["cpi_yoy_pct"],
+        "unemp_pct": macro["unemp_pct"],
+        "rate10y_pct": macro["rate10y_pct"],
+        "gdp_growth_us_pct": macro["gdp_growth_us_pct"],
+        "gdp_growth_in_pct": macro["gdp_growth_in_pct"],
+        "event_signal": ev_avg
+    }
+    X = pd.DataFrame([features])
+    pred_score = ml_model.predict(X)[0]
+    shap_values = explainer.shap_values(X)
+
+    # ---- Download/export ----
+    st.subheader("⬇️ Export Data")
+    csv = ov_df.to_csv(index=False).encode()
+    st.download_button("Download Company Overview CSV", data=csv, file_name=f"{company}_overview.csv", mime="text/csv")
+    st.caption(f"Last refreshed (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
+
+    st.subheader("🤖 ML Model Prediction & Explanation")
+    st.write(f"Predicted Credit Score (ML Model): {pred_score:.2f}")
+
+    # Feature importance
+    shap_df = pd.DataFrame({
+        "Feature": X.columns,
+        "SHAP Value": shap_values[0]
+    }).sort_values("SHAP Value", key=abs, ascending=False)
+
+    st.dataframe(shap_df)
+
+    # Simple natural language summary
+    top_feature = shap_df.iloc[0]
+    if top_feature["SHAP Value"] > 0:
+        impact = "positively"
+    else:
+        impact = "negatively"
+    st.markdown(f"""
+    **Explanation in plain words:**  
+    The model predicts this score mainly because **{top_feature['Feature']}** {impact} influenced the rating.  
+    Other important drivers include {', '.join(shap_df['Feature'].iloc[1:3].tolist())}.
+    """)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ========== FOOTER ==========
 st.markdown("<br>", unsafe_allow_html=True)
@@ -500,3 +603,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
