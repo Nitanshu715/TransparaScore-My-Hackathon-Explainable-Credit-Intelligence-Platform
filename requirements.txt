@@ -17,3 +17,4 @@ requests
 feedparser
 scikit-learn
 joblib
+plotly
