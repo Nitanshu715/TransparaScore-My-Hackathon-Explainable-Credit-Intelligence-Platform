@@ -20,9 +20,7 @@ It combines **financial data, macroeconomic indicators, and news events** to gen
 ---
 
 ## 🛠 Tech Stack
-- **Frontend & Dashboard**: Streamlit  
-- **Data Processing**: Pandas, NumPy  
-- **APIs & Sources**: Yahoo Finance, FRED, World Bank, GDELT, Reuters RSS  
+- Python, Streamlit, Plotly, scikit-learn (Random Forest), pandas, numpy, custom CSS, and multiple financial + macroeconomic APIs (Yahoo Finance, FRED, World Bank, GDELT, Reuters).
 
 ---
 
